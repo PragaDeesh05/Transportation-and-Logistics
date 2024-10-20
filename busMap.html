@@ -1,0 +1,185 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Route Finder with Multiple Routes</title>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css" />
+    <link rel="stylesheet" href="https://unpkg.com/leaflet-routing-machine/dist/leaflet-routing-machine.css" />
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            display: flex;
+        }
+        #map {
+            height: 100vh;
+            width: 70%;
+        }
+        #route-info {
+            width: 30%;
+            padding: 10px;
+            box-sizing: border-box;
+            background-color: #f9f9f9;
+            height: 100vh;
+            overflow-y: auto;
+        }
+        #route-info h3 {
+            margin-top: 0;
+        }
+        .route {
+            padding: 10px;
+            margin-bottom: 10px;
+            background-color: #fff;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+        }
+        .route:hover {
+            background-color: #f0f0f0;
+        }
+    </style>
+</head>
+<body>
+
+    <div id="map"></div>
+    <div id="route-info">
+        <h3>Available Routes</h3>
+        <label for="from">From (Enter Starting Location):</label>
+        <input type="text" id="from" placeholder="Enter starting location" />
+        <label for="to">To (Enter Destination):</label>
+        <input type="text" id="to" placeholder="Enter destination location" />
+        <button id="getRoute">Get Route</button>
+        <div id="routes"></div>
+    </div>
+
+    <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
+    <script src="https://unpkg.com/leaflet-control-geocoder/dist/Control.Geocoder.js"></script>
+    <script src="https://unpkg.com/leaflet-routing-machine/dist/leaflet-routing-machine.js"></script>
+
+    <script>
+        // Initialize the map
+        const map = L.map('map').setView([20.5937, 78.9629], 5); // Centered on India
+
+        // Add OpenStreetMap tile layer
+        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+            maxZoom: 19,
+            attribution: '© OpenStreetMap'
+        }).addTo(map);
+
+        // Add geocoder
+        const geocoder = L.Control.Geocoder.nominatim();
+        let currentLocationMarker;
+
+        // Get user's current location
+        if (navigator.geolocation) {
+            navigator.geolocation.getCurrentPosition(function(position) {
+                const lat = position.coords.latitude;
+                const lng = position.coords.longitude;
+                const currentLocation = [lat, lng];
+
+                // Center map on user's current location
+                map.setView(currentLocation, 13);
+                currentLocationMarker = L.marker(currentLocation).addTo(map).bindPopup('Your Current Location').openPopup();
+            }, function() {
+                alert('Geolocation failed. Please enable it in your browser settings.');
+            });
+        } else {
+            alert('Geolocation is not supported by your browser.');
+        }
+
+        // Get coordinates of a place
+        function getCoordinates(place, callback) {
+            geocoder.geocode(place, function(results) {
+                if (results && results.length > 0) {
+                    const latlng = results[0].center;
+                    callback(latlng);
+                } else {
+                    alert('Location not found: ' + place);
+                }
+            });
+        }
+
+        // Get and display routes from OSRM
+        function getRoutes(start, end) {
+            const osrmUrl = `https://router.project-osrm.org/route/v1/driving/${start.lng},${start.lat};${end.lng},${end.lat}?alternatives=true&geometries=geojson&overview=full`;
+
+            fetch(osrmUrl)
+                .then(response => response.json())
+                .then(data => {
+                    console.log(data); // Log the response for debugging
+
+                    // Clear previous routes from the side panel
+                    document.getElementById('routes').innerHTML = '';
+
+                    if (data.routes && data.routes.length > 0) {
+                        // Clear any existing routes on the map
+                        if (map.routeLayers) {
+                            map.routeLayers.forEach(layer => map.removeLayer(layer));
+                        }
+                        map.routeLayers = []; // Initialize an array to hold route layers
+
+                        // Display all alternative routes
+                        data.routes.forEach((route, index) => {
+                            const color = index === 0 ? 'blue' : 'gray'; // Highlight the shortest path in blue
+                            const routeGeoJSON = route.geometry;
+
+                            // Add the route line to the map
+                            const routeLayer = L.geoJSON(routeGeoJSON, {
+                                style: {
+                                    color: color,
+                                    weight: 4,
+                                    opacity: 0.7,
+                                }
+                            }).addTo(map);
+                            map.routeLayers.push(routeLayer); // Store the layer for later removal
+
+                            // Display distance in the side panel
+                            const distance = (route.distance / 1000).toFixed(2); // Convert meters to kilometers
+
+                            const routeDiv = document.createElement('div');
+                            routeDiv.classList.add('route');
+                            routeDiv.innerHTML = `
+                                <h4>Route ${index + 1}</h4>
+                                <p>Distance: ${distance} km</p>
+                            `;
+                            document.getElementById('routes').appendChild(routeDiv);
+                        });
+                    } else {
+                        alert('No route found.');
+                    }
+                })
+                .catch(err => {
+                    console.error('Error fetching routes:', err);
+                });
+        }
+
+        // Event listener for "Get Route" button
+        document.getElementById('getRoute').addEventListener('click', function() {
+            const fromPlace = document.getElementById('from').value;
+            const toPlace = document.getElementById('to').value;
+
+            if (!fromPlace || !toPlace) {
+                alert('Please enter both starting and destination locations.');
+                return;
+            }
+
+            // Get coordinates of the starting location
+            getCoordinates(fromPlace, function(start) {
+                // Get coordinates of the destination
+                getCoordinates(toPlace, function(end) {
+                    if (!currentLocationMarker) {
+                        alert('Current location is not available yet.');
+                        return;
+                    }
+
+                    const userStart = currentLocationMarker.getLatLng(); // Get user's current location
+                    map.fitBounds([userStart, end]); // Fit map to show both locations
+
+                    // Get and display routes from starting location to destination
+                    getRoutes(start, end);
+                });
+            });
+        });
+    </script>
+
+</body>
+</html>
